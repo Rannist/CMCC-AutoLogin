@@ -1,0 +1,29 @@
+AGENTS.md
+
+# Local account data and runtime cache
+config.json
+settings.json
+login_url.txt
+*.log
+startup_error.log
+
+# Release/build output
+dist/
+build/
+*.spec
+CMCC_AutoLogin.zip
+
+# Local debug screenshots and old copied packages
+ui_runtime_check*.png
+CMCC_AutoLogin_old/
+create_shortcut.py
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Editor/OS noise
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

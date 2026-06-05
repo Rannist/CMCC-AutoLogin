@@ -138,7 +138,7 @@ def copy_release_files(script_dir, dist_dir):
         print("移动目录: notifier")
 
     root_files = [
-        "README.txt",
+        "README.md",
     ]
     script_files = SCRIPT_FILES
     for name in root_files:

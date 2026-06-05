@@ -67,5 +67,3 @@ python build_release.py
 - `dist/notifier/StartupNotifier.exe`
 - `dist/scripts/`
 - `CMCC_AutoLogin.zip`
-
-发布前应确认 ZIP 内不包含个人 `config.json`、`login_url.txt`、日志或调试文件。

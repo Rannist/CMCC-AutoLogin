@@ -212,8 +212,11 @@ class StartupNotice:
         self._show_in_taskbar()
         self._apply_round_window()
         self.root.deiconify()
+        self.root.update_idletasks()
+        self._show_in_taskbar()
         self.root.lift()
         self.root.after(30, lambda: self.root.attributes("-topmost", True))
+        self.root.after(60, self._show_in_taskbar)
         self.root.after(80, self._flash_taskbar)
         self.root.after(320, lambda: self.root.attributes("-topmost", False))
         if self.state_file:
@@ -406,14 +409,19 @@ class StartupNotice:
         self.root.geometry(f"+{event.x_root - self.drag_x}+{event.y_root - self.drag_y}")
 
     def _apply_icon(self):
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        exe_dir = os.path.dirname(sys.executable)
+        frozen_dir = getattr(sys, "_MEIPASS", "")
         candidates = [
-            os.path.join(os.path.dirname(sys.executable), "assets", "app_icon.ico"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "app_icon.ico"),
+            os.path.join(exe_dir, "assets", "app_icon.ico"),
+            os.path.join(frozen_dir, "assets", "app_icon.ico") if frozen_dir else "",
+            os.path.join(base_dir, "assets", "app_icon.ico"),
+            os.path.join(exe_dir, "_internal", "assets", "app_icon.ico"),
         ]
         for icon_path in candidates:
-            if os.path.exists(icon_path):
+            if icon_path and os.path.exists(icon_path):
                 try:
-                    self.root.iconbitmap(icon_path)
+                    self.root.iconbitmap(default=icon_path)
                     return
                 except Exception:
                     pass

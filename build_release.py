@@ -92,6 +92,8 @@ def build_exe():
     ]
     if os.path.exists(icon_path):
         notifier_cmd.extend(["--icon", icon_path])
+    if os.path.exists(assets_dir):
+        notifier_cmd.extend(["--add-data", f"{assets_dir};assets"])
     notifier_cmd.append("StartupNotifier.py")
 
     return run_pyinstaller(notifier_cmd, script_dir, "通知程序 EXE")

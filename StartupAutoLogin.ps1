@@ -833,12 +833,70 @@ function Invoke-FastLogin {
     return $response.Content
 }
 
+function Invoke-CachedFastLoginFirst {
+    param(
+        $Config,
+        [string]$CachedLoginUrl
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CachedLoginUrl)) {
+        return $false
+    }
+    if (-not (Test-LoginUrlReachable -LoginUrl $CachedLoginUrl)) {
+        Write-AppLog "Startup cached fast path skipped: cached portal is not reachable."
+        return $false
+    }
+
+    $password = Read-PlainTextPassword $Config.ProtectedPassword
+    $passwordForMigration = $password
+    try {
+        Write-AppLog "Startup cached fast path uses cached login URL: $CachedLoginUrl"
+        $content = Invoke-FastLogin -LoginUrl $CachedLoginUrl -UserName $Config.UserName -Password $password
+        if (Test-LoginSuccessContent $content) {
+            Write-AppLog ("Startup cached fast path got portal success response: " + (Get-ResponseTextSummary $content))
+            Save-LoginUrl $CachedLoginUrl
+            Set-CredentialVerified -Config $Config -PlainPassword $passwordForMigration
+            if ($StartupNotify) {
+                Reset-StartupOnlineCount
+                Show-StartupLoginSuccess
+            }
+            return $true
+        }
+
+        if (Test-LoginFailureContent $content) {
+            Write-AppLog "Startup cached fast path got strict account/password failure content; fallback to current portal detection before final decision."
+            return $false
+        }
+
+        if (Wait-Internet -TimeoutSeconds 3 -IntervalSeconds 1) {
+            Write-AppLog "Startup cached fast path passed internet check."
+            Save-LoginUrl $CachedLoginUrl
+            Set-CredentialVerified -Config $Config -PlainPassword $passwordForMigration
+            if ($StartupNotify) {
+                Reset-StartupOnlineCount
+                Show-StartupLoginSuccess
+            }
+            return $true
+        }
+
+        Write-AppLog "Startup cached fast path did not confirm internet; fallback to normal detection."
+        return $false
+    }
+    catch {
+        Write-AppLog ("Startup cached fast path failed: " + $_.Exception.Message)
+        return $false
+    }
+    finally {
+        $password = $null
+    }
+}
+
 try {
     Write-AppLog "Startup fast login started."
-    Start-StartupProgressNotice
     Acquire-LoginLock
 
     if (-not (Wait-NetworkLink -TimeoutSeconds 6 -IntervalSeconds 1)) {
+        Start-StartupProgressNotice
         Write-AppLog "Startup fast login skipped: no network link."
         $choice = Show-StartupProblem -Text "开机自动登录未执行：当前没有可用网络连接。`r`n`r`n请检查 WLAN 开关是否打开，并确认已连接 CMCC 校园网。点击“重试”会再次尝试；点击“取消”会自动打开主程序。" -Buttons "retry-cancel"
         if (Test-NoticeRetry $choice) {
@@ -850,9 +908,8 @@ try {
         exit 4
     }
 
-    $null = Show-StartupNotice -Title "校园网自动登录" -Text "正在检查网络和代理状态..." -Kind "warning" -Buttons "none"
-
     while (Test-ProxyEnabled) {
+        Start-StartupProgressNotice
         $choice = Show-StartupProblem -Text "检测到系统代理已开启，可能导致校园网开机自动登录失败。`r`n`r`n请先关闭代理，然后点击“重试”。如果需要修改账号或检查配置，请点击“取消”，程序会自动打开主界面。" -Buttons "retry-cancel"
         if (Test-NoticeRetry $choice) {
             Write-AppLog "User chose retry after proxy warning."
@@ -863,6 +920,15 @@ try {
         Open-MainProgram
         exit 6
     }
+
+    $config = Get-Config
+    $cachedLoginUrl = Get-LoginUrl
+    if (Invoke-CachedFastLoginFirst -Config $config -CachedLoginUrl $cachedLoginUrl) {
+        exit 0
+    }
+
+    Start-StartupProgressNotice
+    $null = Show-StartupNotice -Title "校园网自动登录" -Text "正在检查网络和代理状态..." -Kind "warning" -Buttons "none"
 
     if (Test-Internet) {
         Write-AppLog "Startup fast login skipped: internet is already available."
@@ -875,7 +941,6 @@ try {
         Reset-StartupOnlineCount
     }
 
-    $config = Get-Config
     $null = Show-StartupNotice -Title "校园网自动登录" -Text "正在探测校园网认证地址..." -Kind "warning" -Buttons "none"
     $loginUrl = Find-LoginUrl
     if ([string]::IsNullOrWhiteSpace($loginUrl)) {

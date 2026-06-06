@@ -10,6 +10,11 @@ import ctypes
 from io import BytesIO
 
 try:
+    import winsound
+except Exception:
+    winsound = None
+
+try:
     from PIL import Image, ImageDraw
 except Exception:
     Image = None
@@ -218,6 +223,7 @@ class StartupNotice:
         self.root.after(30, lambda: self.root.attributes("-topmost", True))
         self.root.after(60, self._show_in_taskbar)
         self.root.after(80, self._flash_taskbar)
+        self.root.after(100, self._play_notice_sound)
         self.root.after(320, lambda: self.root.attributes("-topmost", False))
         if self.state_file:
             self.root.after(200, self._poll_state_file)
@@ -228,6 +234,18 @@ class StartupNotice:
         if self.kind == "error":
             return ERROR
         return WARNING
+
+    def _play_notice_sound(self):
+        if self.kind == "success" or self.buttons == "none":
+            return
+        try:
+            if winsound is not None:
+                sound = winsound.MB_ICONHAND if self.kind == "error" else winsound.MB_ICONEXCLAMATION
+                winsound.MessageBeep(sound)
+            else:
+                self.root.bell()
+        except Exception:
+            pass
 
     def _measure_height(self, message):
         line_count = self._wrapped_line_count(message, self.message_width)
@@ -335,6 +353,7 @@ class StartupNotice:
         self._draw_window()
         self._draw_buttons()
         self._flash_taskbar()
+        self._play_notice_sound()
         auto_close_ms = int(state.get("auto_close_ms") or 0)
         if auto_close_ms > 0:
             self.root.after(auto_close_ms, lambda: self.finish(EXIT_OK))

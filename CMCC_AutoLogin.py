@@ -330,6 +330,7 @@ class CapsuleButton(tk.Canvas):
         self._state = tk.NORMAL
         self._hover = False
         self._pressed = False
+        self._layout_text_width = 0
         self._draw()
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
@@ -405,16 +406,20 @@ class CapsuleButton(tk.Canvas):
             text_width = tkfont.Font(font=font_spec).measure(self._text)
         except Exception:
             text_width = max(len(self._text) * 10, 18)
+        self._layout_text_width = max(self._layout_text_width, text_width)
         try:
             icon_width = self._image.width() if has_image else 0
         except Exception:
             icon_width = 22 if has_image else 0
-        gap = 8 if has_image else 0
-        group_width = icon_width + gap + text_width
-        start_x = (self._width - group_width) // 2
         if has_image:
-            self.create_image(start_x + icon_width // 2, self._height // 2, image=self._image)
+            gap = 8
+            group_width = icon_width + gap + self._layout_text_width
+            start_x = max(10, (self._width - group_width) // 2)
+            icon_x = start_x + icon_width // 2
             text_x = start_x + icon_width + gap
+            self.create_image(icon_x, self._height // 2, image=self._image)
+            if text_width < self._layout_text_width:
+                text_x += (self._layout_text_width - text_width) // 2
             anchor = tk.W
         else:
             text_x = self._width // 2
@@ -557,8 +562,12 @@ class AutoLogin:
         self.message_active = False
         self.message_token = 0
         self.message_min_duration_ms = 1800
+        self.notice_dedupe_seconds = 2.0
+        self.notice_last_shown = {}
         self.drag_x = 0
         self.drag_y = 0
+        self.content_scroll_y = 0
+        self.content_max_scroll_y = 0
         self.auto_mode = len(sys.argv) > 1 and sys.argv[1] == "--auto"
 
         self.ensure_config_exists()
@@ -708,23 +717,48 @@ class AutoLogin:
             requested_height = self.window_body.winfo_reqheight()
             visible_height = max(1, self.window_canvas.winfo_height() - 20)
             self.window_canvas.itemconfigure(self.window_item, height=max(1, visible_height, requested_height))
-            self.window_canvas.configure(scrollregion=self.window_canvas.bbox(self.window_item))
+            self.content_max_scroll_y = max(0, requested_height - visible_height)
+            self.content_scroll_y = min(max(0, self.content_scroll_y), self.content_max_scroll_y)
+            self.window_canvas.coords(self.window_item, 10, 10 - self.content_scroll_y)
+            self.window_canvas.configure(scrollregion=(0, 0, self.window_canvas.winfo_width(), self.window_canvas.winfo_height()))
         except Exception:
             pass
 
+    def is_descendant_widget(self, widget, parent):
+        try:
+            current = widget
+            while current is not None:
+                if current == parent:
+                    return True
+                current = current.master
+        except Exception:
+            pass
+        return False
+
     def on_mousewheel(self, event):
         try:
-            if isinstance(getattr(event, "widget", None), tk.Text):
+            widget = getattr(event, "widget", None)
+            if not self.is_descendant_widget(widget, self.master):
                 return
-            bbox = self.window_canvas.bbox(self.window_item)
-            if not bbox:
+            if isinstance(widget, tk.Text):
                 return
-            visible_height = max(1, self.window_canvas.winfo_height())
-            content_height = max(1, bbox[3] - bbox[1])
-            if content_height <= visible_height:
-                self.window_canvas.yview_moveto(0)
+            self.update_content_scrollregion()
+            if self.content_max_scroll_y <= 0:
+                self.content_scroll_y = 0
+                self.window_canvas.coords(self.window_item, 10, 10)
                 return
-            self.window_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            delta = getattr(event, "delta", 0)
+            if delta:
+                step = -1 * int(delta / 120) * 40
+            elif getattr(event, "num", None) == 4:
+                step = -40
+            elif getattr(event, "num", None) == 5:
+                step = 40
+            else:
+                return
+            self.content_scroll_y = min(max(0, self.content_scroll_y + step), self.content_max_scroll_y)
+            self.window_canvas.coords(self.window_item, 10, 10 - self.content_scroll_y)
+            return "break"
         except Exception:
             pass
 
@@ -780,6 +814,8 @@ class AutoLogin:
         self.window_canvas.bind("<Configure>", self.redraw_window_shell)
         self.window_body.bind("<Configure>", self.update_content_scrollregion)
         self.window_canvas.bind_all("<MouseWheel>", self.on_mousewheel)
+        self.window_canvas.bind_all("<Button-4>", self.on_mousewheel)
+        self.window_canvas.bind_all("<Button-5>", self.on_mousewheel)
 
         self.title_bar = tk.Frame(self.window_body, bg=APP_BG, height=40)
         self.title_bar.pack(fill=tk.X)
@@ -1079,7 +1115,11 @@ class AutoLogin:
                     "confirm-cancel",
                 )
                 if code != 0:
-                    self.master.after(0, lambda: self.restore_button(self.save_button))
+                    def cancel_update():
+                        self.restore_button(self.save_button)
+                        self.check_initial_state()
+
+                    self.master.after(0, cancel_update)
                     return
 
             def update():
@@ -1104,6 +1144,12 @@ class AutoLogin:
         self.force_exit()
 
     def force_exit(self):
+        try:
+            self.window_canvas.unbind_all("<MouseWheel>")
+            self.window_canvas.unbind_all("<Button-4>")
+            self.window_canvas.unbind_all("<Button-5>")
+        except Exception:
+            pass
         try:
             self.master.quit()
         except Exception:
@@ -1150,6 +1196,8 @@ class AutoLogin:
         self.process_message_queue()
 
     def notify_user(self, title, message, kind="warning", buttons="ok"):
+        if self.should_skip_duplicate_notice(title, message, kind, buttons):
+            return 0
         payload = {
             "title": title or "校园网自动登录",
             "message": message,
@@ -1183,6 +1231,8 @@ class AutoLogin:
         return 20
 
     def notify_user_wait(self, title, message, kind="warning", buttons="ok"):
+        if self.should_skip_duplicate_notice(title, message, kind, buttons):
+            return 20
         payload = {
             "title": title or "校园网自动登录",
             "message": message,
@@ -1209,6 +1259,23 @@ class AutoLogin:
                     return 20
         self.log("提示程序缺失，确认操作已取消", WARNING, "错误")
         return 20
+
+    def should_skip_duplicate_notice(self, title, message, kind, buttons):
+        now = time.monotonic()
+        signature = (title or "校园网自动登录", message or "", kind or "warning", buttons or "ok")
+        last_shown_at = self.notice_last_shown.get(signature, 0)
+        if now - last_shown_at < self.notice_dedupe_seconds:
+            self.log("已忽略重复提示弹窗", MUTED, "提示")
+            return True
+        self.notice_last_shown[signature] = now
+        if len(self.notice_last_shown) > 32:
+            expired_before = now - self.notice_dedupe_seconds * 4
+            self.notice_last_shown = {
+                key: value
+                for key, value in self.notice_last_shown.items()
+                if value >= expired_before
+            }
+        return False
 
     def log(self, message, color=TEXT, category="后台"):
         timestamp = datetime.now().strftime("%H:%M:%S")

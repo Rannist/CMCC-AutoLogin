@@ -357,35 +357,7 @@ function Find-LoginUrl {
 
     foreach ($probeUrl in $probeUrls) {
         try {
-            $response = Invoke-WebRequest -Uri $probeUrl -UseBasicParsing -TimeoutSec 2 -MaximumRedirection 0
-            $location = $response.Headers["Location"]
-            if (Test-CmccPortalUrl $location) {
-                Write-AppLog "Detected portal URL from redirect: $location"
-                return $location
-            }
-        }
-        catch {
-            $response = $_.Exception.Response
-            if ($response) {
-                $location = $response.Headers["Location"]
-                if (Test-CmccPortalUrl $location) {
-                    Write-AppLog "Detected portal URL from redirect: $location"
-                    return $location
-                }
-                try {
-                    if (Test-CmccPortalUrl $response.ResponseUri.AbsoluteUri) {
-                        $detectedUrl = $response.ResponseUri.AbsoluteUri
-                        Write-AppLog "Detected portal URL from response URI: $detectedUrl"
-                        return $detectedUrl
-                    }
-                }
-                catch {
-                }
-            }
-        }
-
-        try {
-            $response = Invoke-WebRequest -Uri $probeUrl -UseBasicParsing -TimeoutSec 2
+            $response = Invoke-WebRequest -Uri $probeUrl -UseBasicParsing -TimeoutSec 2 -MaximumRedirection 5
             if (Test-CmccPortalUrl $response.BaseResponse.ResponseUri.AbsoluteUri) {
                 $detectedUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
                 Write-AppLog "Detected portal URL from final URI: $detectedUrl"
@@ -400,6 +372,27 @@ function Find-LoginUrl {
             }
         }
         catch {
+            $response = $_.Exception.Response
+            if ($response) {
+                try {
+                    $location = $response.Headers["Location"]
+                    if (Test-CmccPortalUrl $location) {
+                        Write-AppLog "Detected portal URL from redirect: $location"
+                        return $location
+                    }
+                }
+                catch {
+                }
+                try {
+                    if (Test-CmccPortalUrl $response.ResponseUri.AbsoluteUri) {
+                        $detectedUrl = $response.ResponseUri.AbsoluteUri
+                        Write-AppLog "Detected portal URL from response URI: $detectedUrl"
+                        return $detectedUrl
+                    }
+                }
+                catch {
+                }
+            }
             Write-AppLog ("Portal auto-detect failed for $probeUrl`: " + $_.Exception.Message)
         }
     }

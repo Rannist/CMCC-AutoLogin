@@ -531,11 +531,18 @@ function Find-LoginUrl {
 
     foreach ($probeUrl in $probeUrls) {
         try {
-            $response = Invoke-WebRequest -Uri $probeUrl -UseBasicParsing -TimeoutSec 2 -MaximumRedirection 0
-            $location = $response.Headers["Location"]
-            if (Test-CmccPortalUrl $location) {
-                Write-AppLog "Startup detected portal URL from redirect: $location"
-                return $location
+            $response = Invoke-WebRequest -Uri $probeUrl -UseBasicParsing -TimeoutSec 2 -MaximumRedirection 5
+            if (Test-CmccPortalUrl $response.BaseResponse.ResponseUri.AbsoluteUri) {
+                $detectedUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
+                Write-AppLog "Startup detected portal URL from final URI: $detectedUrl"
+                return $detectedUrl
+            }
+            if ($response.Content -match '(?i)(<form\b|password|login|portal|auth|认证|登录|登陆)') {
+                $detectedUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
+                if (Test-CmccPortalUrl $detectedUrl) {
+                    Write-AppLog "Startup detected portal content, using final URI: $detectedUrl"
+                    return $detectedUrl
+                }
             }
         }
         catch {
@@ -562,25 +569,7 @@ function Find-LoginUrl {
                     Write-AppLog ("Startup response URI read failed: " + $_.Exception.Message)
                 }
             }
-        }
-
-        try {
-            $response = Invoke-WebRequest -Uri $probeUrl -UseBasicParsing -TimeoutSec 2
-            if (Test-CmccPortalUrl $response.BaseResponse.ResponseUri.AbsoluteUri) {
-                $detectedUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
-                Write-AppLog "Startup detected portal URL from final URI: $detectedUrl"
-                return $detectedUrl
-            }
-            if ($response.Content -match '(?i)(<form\b|password|login|portal|auth|认证|登录|登陆)') {
-                $detectedUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
-                if (Test-CmccPortalUrl $detectedUrl) {
-                    Write-AppLog "Startup detected portal content, using final URI: $detectedUrl"
-                    return $detectedUrl
-                }
-            }
-        }
-        catch {
-            Write-AppLog ("Startup portal final-URI detection failed for $probeUrl`: " + $_.Exception.Message)
+            Write-AppLog ("Startup portal detection failed for $probeUrl`: " + $_.Exception.Message)
         }
     }
 
